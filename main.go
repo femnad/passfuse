@@ -12,25 +12,35 @@ import (
 )
 
 var args struct {
-	MountPath       string `default:"/tmp/.passfuse" arg:"-m"`
 	CreateMountPath bool   `default:"true" arg:"-c"`
+	MountPath       string `default:"/tmp/.passfuse" arg:"-m"`
+	PasswordStorePath string `arg:"-p"`
 }
 
 func main() {
 	arg.MustParse(&args)
-	server, _ := fs.NewPassFS()
+
+	server, err := fs.NewPassFS(args.PasswordStorePath)
+	if err != nil {
+		fmt.Printf("Error initializing filesystem %s\n", err)
+		os.Exit(1)
+	}
+
 	cfg := &fuse.MountConfig{}
-	_, err := os.Stat(args.MountPath)
+	_, err = os.Stat(args.MountPath)
 	if errors.Is(err, os.ErrNotExist) && args.CreateMountPath {
 		err = os.MkdirAll(args.MountPath, 0755)
 		if err != nil {
 			panic(err)
 		}
 	}
+
 	mountedFS, err := fuse.Mount(args.MountPath, server, cfg)
 	if err != nil {
-		panic(err)
+		fmt.Printf("Error mounting filesystem %s\n", err)
+		os.Exit(1)
 	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
 	go func() {
@@ -44,8 +54,10 @@ func main() {
 			}
 		}
 	}()
+
 	err = mountedFS.Join(context.Background())
 	if err != nil {
-		panic(err)
+		fmt.Printf("Error unmounting filesystem %s\n", err)
+		os.Exit(1)
 	}
 }

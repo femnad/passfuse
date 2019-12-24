@@ -2,7 +2,6 @@ package fs
 
 import (
 	"context"
-	"fmt"
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/jacobsa/fuse/fuseutil"
@@ -13,12 +12,21 @@ import (
 	"time"
 )
 
-func NewPassFS() (server fuse.Server, err error) {
+const defaultPath = "$HOME/.password-store"
+
+func NewPassFS(path string) (server fuse.Server, err error) {
 	user := uint32(os.Getuid())
 	group := uint32(os.Getgid())
 
-	home := os.Getenv("HOME")
-	fi, _ := ioutil.ReadDir(fmt.Sprintf("%s/.password-store", home))
+	if path == "" {
+		path = os.ExpandEnv(defaultPath)
+	}
+
+	fi, err := ioutil.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+
 	var children []fuseutil.Dirent
 	inodes := make(map[fuseops.InodeID]inodeInfo)
 	for i, f := range fi {
