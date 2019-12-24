@@ -17,14 +17,13 @@ import (
 )
 
 func NewHelloFS() (server fuse.Server, err error) {
-	user := os.Getuid()
-	group := os.Getgid()
-	fs := &helloFS{user: uint32(user), group: uint32(group)}
+	user := uint32(os.Getuid())
+	group := uint32(os.Getgid())
 
 	home := os.Getenv("HOME")
 	fi, _ := ioutil.ReadDir(fmt.Sprintf("%s/.password-store", home))
 	var children []fuseutil.Dirent
-	gInodeInfo = map[fuseops.InodeID]inodeInfo{}
+	inodes := make(map[fuseops.InodeID]inodeInfo)
 	for i, f := range fi {
 		childInode := fuseops.InodeID(fuseops.RootInodeID + 1)
 		child := fuseutil.Dirent{
@@ -34,18 +33,18 @@ func NewHelloFS() (server fuse.Server, err error) {
 			Type:   getType(f),
 		}
 		children = append(children, child)
-		gInodeInfo[childInode] = inodeInfo{
+		inodes[childInode] = inodeInfo{
 			attributes: fuseops.InodeAttributes{
 				Nlink: 1,
 				Mode:  getMode(f),
-				Uid:   fs.user,
-				Gid:   fs.group,
+				Uid:   user,
+				Gid:   group,
 			},
 			dir:      f.IsDir(),
 			children: nil,
 		}
 	}
-	gInodeInfo[fuseops.RootInodeID] = inodeInfo{
+	inodes[fuseops.RootInodeID] = inodeInfo{
 		attributes: fuseops.InodeAttributes{
 			Nlink: 1,
 			Mode:  0555 | os.ModeDir,
@@ -53,6 +52,7 @@ func NewHelloFS() (server fuse.Server, err error) {
 		dir:      true,
 		children: children,
 	}
+	fs := &helloFS{inodes: inodes, user: user, group: group}
 	server = fuseutil.NewFileSystemServer(fs)
 	return
 }
@@ -61,14 +61,8 @@ type helloFS struct {
 	fuseutil.NotImplementedFileSystem
 	user  uint32
 	group uint32
+	inodes map[fuseops.InodeID]inodeInfo
 }
-
-const (
-	rootInode fuseops.InodeID = fuseops.RootInodeID + iota
-	helloInode
-	dirInode
-	worldInode
-)
 
 type inodeInfo struct {
 	attributes fuseops.InodeAttributes
@@ -79,9 +73,6 @@ type inodeInfo struct {
 	// For directories, children.
 	children []fuseutil.Dirent
 }
-
-// We have a fixed directory structure.
-var gInodeInfo map[fuseops.InodeID]inodeInfo
 
 func findChildInode(
 	name string,
@@ -131,7 +122,7 @@ func (fs *helloFS) LookUpInode(
 	ctx context.Context,
 	op *fuseops.LookUpInodeOp) (err error) {
 	// Find the info for the parent.
-	parentInfo, ok := gInodeInfo[op.Parent]
+	parentInfo, ok := fs.inodes[op.Parent]
 	if !ok {
 		err = fuse.ENOENT
 		return
@@ -145,7 +136,7 @@ func (fs *helloFS) LookUpInode(
 
 	// Copy over information.
 	op.Entry.Child = childInode
-	op.Entry.Attributes = gInodeInfo[childInode].attributes
+	op.Entry.Attributes = fs.inodes[childInode].attributes
 
 	// Patch attributes.
 	fs.patchAttributes(&op.Entry.Attributes)
@@ -157,7 +148,7 @@ func (fs *helloFS) GetInodeAttributes(
 	ctx context.Context,
 	op *fuseops.GetInodeAttributesOp) (err error) {
 	// Find the info for this inode.
-	info, ok := gInodeInfo[op.Inode]
+	info, ok := fs.inodes[op.Inode]
 	if !ok {
 		err = fuse.ENOENT
 		return
@@ -183,7 +174,7 @@ func (fs *helloFS) ReadDir(
 	ctx context.Context,
 	op *fuseops.ReadDirOp) (err error) {
 	// Find the info for this inode.
-	info, ok := gInodeInfo[op.Inode]
+	info, ok := fs.inodes[op.Inode]
 	if !ok {
 		err = fuse.ENOENT
 		return
