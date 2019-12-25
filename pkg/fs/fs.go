@@ -2,62 +2,78 @@ package fs
 
 import (
 	"context"
+	"github.com/femnad/passfuse/pkg/pass"
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/jacobsa/fuse/fuseutil"
 	"io"
-	"io/ioutil"
 	"os"
 	"strings"
 	"time"
 )
 
-const defaultPath = "$HOME/.password-store"
+func (fs *passFS) getChildren(root pass.Node) []fuseutil.Dirent {
+	var children []fuseutil.Dirent
+	if !root.IsLeaf {
+		for index, child := range root.Children {
+			childInode := fs.getInode()
+			childEntry := fuseutil.Dirent{
+				Offset: fuseops.DirOffset(index + 1),
+				Inode:  childInode,
+				Name:   child.Secret,
+				Type:   getType(child),
+			}
+			children = append(children, childEntry)
+			fs.inodes[childInode] = inodeInfo{
+				attributes: fuseops.InodeAttributes{
+					Nlink: 1,
+					Mode:  getMode(child),
+					Uid:   fs.user,
+					Gid:   fs.group,
+				},
+				dir:      !child.IsLeaf,
+				children: fs.getChildren(child),
+			}
+		}
+	}
+	fs.inodes[fs.getInode()] = inodeInfo{
+		attributes: fuseops.InodeAttributes{
+			Nlink: 1,
+			Mode:  getMode(root),
+			Uid:   fs.user,
+			Gid:   fs.group,
+		},
+		dir:        !root.IsLeaf,
+		children:   children,
+	}
+	return children
+}
+
+func (fs *passFS) getInode() fuseops.InodeID {
+	allocatedInode := fs.allocatableInode
+	fs.allocatableInode++
+	return allocatedInode
+}
 
 func NewPassFS(path string) (server fuse.Server, err error) {
 	user := uint32(os.Getuid())
 	group := uint32(os.Getgid())
 
-	if path == "" {
-		path = os.ExpandEnv(defaultPath)
-	}
-
-	fi, err := ioutil.ReadDir(path)
+	rootNode, err := pass.GetPassTree(path)
 	if err != nil {
 		return nil, err
 	}
 
-	var children []fuseutil.Dirent
 	inodes := make(map[fuseops.InodeID]inodeInfo)
-	for i, f := range fi {
-		childInode := fuseops.InodeID(fuseops.RootInodeID + 1)
-		child := fuseutil.Dirent{
-			Offset: fuseops.DirOffset(i + 1),
-			Inode:  childInode,
-			Name:   f.Name(),
-			Type:   getType(f),
-		}
-		children = append(children, child)
-		inodes[childInode] = inodeInfo{
-			attributes: fuseops.InodeAttributes{
-				Nlink: 1,
-				Mode:  getMode(f),
-				Uid:   user,
-				Gid:   group,
-			},
-			dir:      f.IsDir(),
-			children: nil,
-		}
-	}
+	fs := &passFS{inodes: inodes, user: user, group: group, allocatableInode:fuseops.RootInodeID+1}
 	inodes[fuseops.RootInodeID] = inodeInfo{
 		attributes: fuseops.InodeAttributes{
 			Nlink: 1,
 			Mode:  0555 | os.ModeDir,
 		},
 		dir:      true,
-		children: children,
+		children: fs.getChildren(rootNode),
 	}
-	fs := &passFS{inodes: inodes, user: user, group: group}
 	server = fuseutil.NewFileSystemServer(fs)
 	return
 }
@@ -67,6 +83,7 @@ type passFS struct {
 	user  uint32
 	group uint32
 	inodes map[fuseops.InodeID]inodeInfo
+	allocatableInode fuseops.InodeID
 }
 
 type inodeInfo struct {
@@ -109,18 +126,18 @@ func (fs *passFS) StatFS(
 	return
 }
 
-func getType(info os.FileInfo) fuseutil.DirentType {
-	if info.IsDir() {
-		return fuseutil.DT_Directory
+func getType(node pass.Node) fuseutil.DirentType {
+	if node.IsLeaf {
+		return fuseutil.DT_File
 	}
-	return fuseutil.DT_File
+	return fuseutil.DT_Directory
 }
 
-func getMode(info os.FileInfo) os.FileMode {
-	if info.IsDir() {
-		return 0555 | os.ModeDir
+func getMode(node pass.Node) os.FileMode {
+	if node.IsLeaf {
+		return 0644
 	}
-	return 0644
+	return 0555 | os.ModeDir
 }
 
 func (fs *passFS) LookUpInode(
