@@ -10,67 +10,72 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	dirSize = 4096
 	maxSize = 1024
 )
 
-func (fs *passFS) getChildren(root *pass.Node) []fuseutil.Dirent {
-	var children []fuseutil.Dirent
-	if !root.IsLeaf {
-		for index, child := range root.Children {
-			childInode := fs.allocateInode()
-			childEntry := fuseutil.Dirent{
-				Offset: fuseops.DirOffset(index + 1),
-				Inode:  childInode,
-				Name:   child.Secret,
-				Type:   getType(child),
-			}
-			childSize := dirSize
-			if child.IsLeaf {
-				childSize = maxSize
-			}
-			children = append(children, childEntry)
-			fs.inodes[childInode] = inodeInfo{
-				attributes: fuseops.InodeAttributes{
-					Nlink: 1,
-					Mode:  getMode(child),
-					Uid:   fs.user,
-					Gid:   fs.group,
-					Size:uint64(childSize),
-				},
-				dir:      !child.IsLeaf,
-				children: fs.getChildren(&child),
-				secret: child.Secret,
-			}
-		}
-	}
-	rootSize := dirSize
-	if root.IsLeaf {
-		rootSize = maxSize
-	}
-	fs.inodes[fs.allocateInode()] = inodeInfo{
-		attributes: fuseops.InodeAttributes{
-			Nlink: 1,
-			Mode:  getMode(*root),
-			Uid:   fs.user,
-			Gid:   fs.group,
-			Size:uint64(rootSize),
-		},
-		dir:        !root.IsLeaf,
-		children:   children,
-		secret:root.Secret,
-	}
-	return children
-}
-
 func (fs *passFS) allocateInode() fuseops.InodeID {
+	fs.mutex.Lock()
+	defer fs.mutex.Unlock()
 	allocatedInode := fs.allocatableInode
 	fs.allocatableInode++
 	return allocatedInode
+}
+
+func getSecretBaseName(node pass.Node) string {
+	splitBySlash := strings.Split(node.Secret, "/")
+	if len(splitBySlash) == 0 {
+		panic(fmt.Errorf("cannot determine basename of secret %s", node.Secret))
+	}
+	return splitBySlash[len(splitBySlash)-1]
+}
+
+func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) fuseutil.Dirent {
+	if node.IsLeaf {
+		childInode := fs.allocateInode()
+		childEnt := fuseutil.Dirent{
+			Offset: offset,
+			Inode:  childInode,
+			Name:   getSecretBaseName(node),
+			Type:   fuseutil.DT_File,
+		}
+		fs.inodes[childInode] = inodeInfo{
+			attributes: fuseops.InodeAttributes{
+				Nlink: 1,
+				Mode:  0644,
+				Size:  maxSize,
+			},
+			dir: false,
+			secret:node.Secret,
+		}
+		return childEnt
+	} else {
+		var nodesChildren []fuseutil.Dirent
+		for index, child := range node.Children {
+			nodesChildren = append(nodesChildren, fs.locateChildren(child, fuseops.DirOffset(index + 1)))
+		}
+		nodeInode := fs.allocateInode()
+		nodeEnt := fuseutil.Dirent{
+			Offset: offset,
+			Inode:  nodeInode,
+			Name:   getSecretBaseName(node),
+			Type:   fuseutil.DT_Directory,
+		}
+		fs.inodes[nodeInode] = inodeInfo{
+			attributes: fuseops.InodeAttributes{
+				Nlink: 1,
+				Mode:  0755 | os.ModeDir,
+			},
+			dir: true,
+			secret:node.Secret,
+			children:nodesChildren,
+		}
+		return nodeEnt
+	}
 }
 
 func NewPassFS(path string) (server fuse.Server, err error) {
@@ -83,24 +88,32 @@ func NewPassFS(path string) (server fuse.Server, err error) {
 	}
 
 	inodes := make(map[fuseops.InodeID]inodeInfo)
-	fs := &passFS{inodes: inodes, user: user, group: group, allocatableInode:fuseops.RootInodeID+1}
-	inodes[fuseops.RootInodeID] = inodeInfo{
+	fs := &passFS{inodes: inodes, user: user, group: group, allocatableInode: fuseops.RootInodeID + 1}
+	rootInfo := inodeInfo{
 		attributes: fuseops.InodeAttributes{
 			Nlink: 1,
-			Mode:  0555 | os.ModeDir,
+			Mode:  0755 | os.ModeDir,
 		},
-		dir:      true,
-		children: fs.getChildren(&rootNode),
+		dir: true,
 	}
+
+	var children []fuseutil.Dirent
+	for index, child := range rootNode.Children {
+		children = append(children, fs.locateChildren(child, fuseops.DirOffset(index+1)))
+	}
+	rootInfo.children = children
+	fs.inodes[fuseops.RootInodeID] = rootInfo
 	server = fuseutil.NewFileSystemServer(fs)
 	return
 }
 
 type passFS struct {
 	fuseutil.NotImplementedFileSystem
-	user  uint32
-	group uint32
-	inodes map[fuseops.InodeID]inodeInfo
+	user             uint32
+	group            uint32
+	inodes           map[fuseops.InodeID]inodeInfo
+	node             pass.Node
+	mutex            sync.Mutex
 	allocatableInode fuseops.InodeID
 }
 
@@ -179,6 +192,7 @@ func (fs *passFS) LookUpInode(
 	// Copy over information.
 	op.Entry.Child = childInode
 	op.Entry.Attributes = fs.inodes[childInode].attributes
+	op.Entry.AttributesExpiration = time.Now().Add(time.Hour)
 
 	// Patch attributes.
 	fs.patchAttributes(&op.Entry.Attributes)
@@ -240,6 +254,11 @@ func (fs *passFS) ReadDir(
 
 	// Resume at the specified offset into the array.
 	for _, e := range entries {
+		splitBySlash := strings.Split(e.Name, "/")
+		e.Name = splitBySlash[len(splitBySlash)-1]
+		if e.Offset == 0 {
+			continue
+		}
 		n := fuseutil.WriteDirent(op.Dst[op.BytesRead:], e)
 		if n == 0 {
 			break
