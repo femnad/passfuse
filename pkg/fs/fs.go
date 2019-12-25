@@ -9,7 +9,6 @@ import (
 	"github.com/jacobsa/fuse/fuseutil"
 	"io"
 	"os"
-	"path"
 	"strings"
 	"time"
 )
@@ -45,7 +44,7 @@ func (fs *passFS) getChildren(root *pass.Node) []fuseutil.Dirent {
 				},
 				dir:      !child.IsLeaf,
 				children: fs.getChildren(&child),
-				secret: path.Join(root.Secret, child.Secret),
+				secret: child.Secret,
 			}
 		}
 	}
@@ -199,6 +198,7 @@ func (fs *passFS) GetInodeAttributes(
 
 	// Copy over its attributes.
 	op.Attributes = info.attributes
+	op.AttributesExpiration = time.Now().Add(time.Hour)
 
 	// Patch attributes.
 	fs.patchAttributes(&op.Attributes)
