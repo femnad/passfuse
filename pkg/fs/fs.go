@@ -2,26 +2,37 @@ package fs
 
 import (
 	"context"
+	"fmt"
 	"github.com/femnad/passfuse/pkg/pass"
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/jacobsa/fuse/fuseutil"
 	"io"
 	"os"
+	"path"
 	"strings"
 	"time"
 )
 
-func (fs *passFS) getChildren(root pass.Node) []fuseutil.Dirent {
+const (
+	dirSize = 4096
+	maxSize = 1024
+)
+
+func (fs *passFS) getChildren(root *pass.Node) []fuseutil.Dirent {
 	var children []fuseutil.Dirent
 	if !root.IsLeaf {
 		for index, child := range root.Children {
-			childInode := fs.getInode()
+			childInode := fs.allocateInode()
 			childEntry := fuseutil.Dirent{
 				Offset: fuseops.DirOffset(index + 1),
 				Inode:  childInode,
 				Name:   child.Secret,
 				Type:   getType(child),
+			}
+			childSize := dirSize
+			if child.IsLeaf {
+				childSize = maxSize
 			}
 			children = append(children, childEntry)
 			fs.inodes[childInode] = inodeInfo{
@@ -30,26 +41,34 @@ func (fs *passFS) getChildren(root pass.Node) []fuseutil.Dirent {
 					Mode:  getMode(child),
 					Uid:   fs.user,
 					Gid:   fs.group,
+					Size:uint64(childSize),
 				},
 				dir:      !child.IsLeaf,
-				children: fs.getChildren(child),
+				children: fs.getChildren(&child),
+				secret: path.Join(root.Secret, child.Secret),
 			}
 		}
 	}
-	fs.inodes[fs.getInode()] = inodeInfo{
+	rootSize := dirSize
+	if root.IsLeaf {
+		rootSize = maxSize
+	}
+	fs.inodes[fs.allocateInode()] = inodeInfo{
 		attributes: fuseops.InodeAttributes{
 			Nlink: 1,
-			Mode:  getMode(root),
+			Mode:  getMode(*root),
 			Uid:   fs.user,
 			Gid:   fs.group,
+			Size:uint64(rootSize),
 		},
 		dir:        !root.IsLeaf,
 		children:   children,
+		secret:root.Secret,
 	}
 	return children
 }
 
-func (fs *passFS) getInode() fuseops.InodeID {
+func (fs *passFS) allocateInode() fuseops.InodeID {
 	allocatedInode := fs.allocatableInode
 	fs.allocatableInode++
 	return allocatedInode
@@ -72,7 +91,7 @@ func NewPassFS(path string) (server fuse.Server, err error) {
 			Mode:  0555 | os.ModeDir,
 		},
 		dir:      true,
-		children: fs.getChildren(rootNode),
+		children: fs.getChildren(&rootNode),
 	}
 	server = fuseutil.NewFileSystemServer(fs)
 	return
@@ -94,6 +113,8 @@ type inodeInfo struct {
 
 	// For directories, children.
 	children []fuseutil.Dirent
+
+	secret string
 }
 
 func findChildInode(
@@ -237,11 +258,16 @@ func (fs *passFS) OpenFile(
 	return
 }
 
-func (fs *passFS) ReadFile(
-	ctx context.Context,
-	op *fuseops.ReadFileOp) (err error) {
+func (fs *passFS) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) (err error) {
+	inode, err := fs.getInode(op.Inode)
+	if err != nil {
+		return err
+	}
+
+	secretContent, err := pass.GetSecret(inode.secret)
+
 	// Let io.ReaderAt deal with the semantics.
-	reader := strings.NewReader("Hello, world!")
+	reader := strings.NewReader(secretContent)
 
 	op.BytesRead, err = reader.ReadAt(op.Dst, op.Offset)
 
@@ -251,4 +277,12 @@ func (fs *passFS) ReadFile(
 	}
 
 	return
+}
+
+func (fs *passFS) getInode(id fuseops.InodeID) (*inodeInfo, error) {
+	inode, ok := fs.inodes[id]
+	if !ok {
+		return nil, fmt.Errorf("inode %d not found", id)
+	}
+	return &inode, nil
 }
