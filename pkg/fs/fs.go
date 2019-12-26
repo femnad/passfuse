@@ -15,7 +15,6 @@ import (
 )
 
 const (
-	maxSize = 1024
 	secretFileSuffix = ".gpg"
 	secretContentsSuffix = ".contents"
 )
@@ -51,7 +50,6 @@ func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) fuseu
 			attributes: fuseops.InodeAttributes{
 				Nlink: 1,
 				Mode:  0644,
-				Size:  maxSize,
 			},
 			dir: false,
 			secret:node.Secret,
@@ -196,6 +194,12 @@ func (fs *passFS) LookUpInode(
 	// Copy over information.
 	op.Entry.Child = childInode
 	op.Entry.Attributes = fs.inodes[childInode].attributes
+	secretSize, err := pass.GetSecretSize(fs.inodes[childInode].secret)
+	if err != nil {
+		return err
+	}
+
+	op.Entry.Attributes.Size = uint64(secretSize)
 	op.Entry.AttributesExpiration = time.Now().Add(time.Hour)
 
 	// Patch attributes.
@@ -286,6 +290,9 @@ func (fs *passFS) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) (err err
 	}
 
 	secretContent, err := pass.GetSecret(inode.secret)
+	if err != nil {
+		return err
+	}
 
 	// Let io.ReaderAt deal with the semantics.
 	reader := strings.NewReader(secretContent)

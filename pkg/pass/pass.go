@@ -17,8 +17,8 @@ const (
 
 type Node struct {
 	Children []Node
-	Secret   string
 	IsLeaf   bool
+	Secret   string
 }
 
 type Parser struct {
@@ -64,18 +64,30 @@ func GetPassTree(basePath string) (Node, error) {
 	return root, nil
 }
 
-func GetSecret(secretName string) (string, error) {
+func getSecretContent(secretName string) ([]byte, error) {
 	secretName = strings.TrimSuffix(secretName, secretSuffix)
 	cmd := exec.Command("pass", secretName)
 	stdout := bytes.Buffer{}
 	cmd.Stdout = &stdout
 	err := cmd.Run()
 	if err != nil {
-		return "", fmt.Errorf("error getting secret %s: %s", secretName, err)
+		return []byte{}, fmt.Errorf("error getting secret %s: %s", secretName, err)
 	}
 	output, err := ioutil.ReadAll(&stdout)
+	return output, err
+}
+func GetSecret(secretName string) (string, error) {
+	output, err := getSecretContent(secretName)
 	if err != nil {
 		return "", fmt.Errorf("error reading secret %s: %s", secretName, err)
 	}
 	return string(output), nil
+}
+
+func GetSecretSize(secretName string) (int, error) {
+	output, err := getSecretContent(secretName)
+	if err != nil {
+		return 0, fmt.Errorf("error reading secret %s: %s", secretName, err)
+	}
+	return len(output), nil
 }
