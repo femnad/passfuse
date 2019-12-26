@@ -254,8 +254,6 @@ func (fs *passFS) ReadDir(
 
 	// Resume at the specified offset into the array.
 	for _, e := range entries {
-		splitBySlash := strings.Split(e.Name, "/")
-		e.Name = splitBySlash[len(splitBySlash)-1]
 		if e.Offset == 0 {
 			continue
 		}
