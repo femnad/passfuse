@@ -9,12 +9,18 @@ import (
 	"github.com/jacobsa/fuse"
 	"os"
 	"os/signal"
+	"time"
+)
+
+const (
+	mountPathPermission = 0700
 )
 
 var args struct {
 	CreateMountPath bool   `default:"true" arg:"-c"`
 	MountPath       string `default:"$HOME/.mnt/passfuse" arg:"-m"`
 	PasswordStorePath string `arg:"-p"`
+	UnmountAfter int `arg:"-u"`
 }
 
 func main() {
@@ -30,7 +36,12 @@ func main() {
 	mountPath := os.ExpandEnv(args.MountPath)
 	_, err = os.Stat(mountPath)
 	if errors.Is(err, os.ErrNotExist) && args.CreateMountPath {
-		err = os.MkdirAll(mountPath, 0755)
+		err = os.MkdirAll(mountPath, mountPathPermission)
+		if err != nil {
+			panic(err)
+		}
+	} else if err == nil {
+		err := os.Chmod(mountPath, mountPathPermission)
 		if err != nil {
 			panic(err)
 		}
@@ -52,6 +63,16 @@ func main() {
 				fmt.Printf("Unmount error %v\n", err)
 			} else {
 				break
+			}
+		}
+	}()
+
+	go func() {
+		if args.UnmountAfter > 0 {
+			time.Sleep(time.Second * time.Duration(args.UnmountAfter))
+			err := fuse.Unmount(mountPath)
+			if err != nil {
+				fmt.Printf("Unmount error %v\n", err)
 			}
 		}
 	}()

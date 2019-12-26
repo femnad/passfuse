@@ -15,7 +15,9 @@ import (
 )
 
 const (
-	secretFileSuffix = ".gpg"
+	dirPermission        = 0500
+	filePermission       = 0400
+	secretFileSuffix     = ".gpg"
 	secretContentsSuffix = ".contents"
 )
 
@@ -49,7 +51,7 @@ func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) fuseu
 		fs.inodes[childInode] = inodeInfo{
 			attributes: fuseops.InodeAttributes{
 				Nlink: 1,
-				Mode:  0644,
+				Mode:  filePermission,
 			},
 			dir: false,
 			secret:node.Secret,
@@ -70,7 +72,7 @@ func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) fuseu
 		fs.inodes[nodeInode] = inodeInfo{
 			attributes: fuseops.InodeAttributes{
 				Nlink: 1,
-				Mode:  0755 | os.ModeDir,
+				Mode:  dirPermission | os.ModeDir,
 			},
 			dir: true,
 			secret:node.Secret,
@@ -90,11 +92,12 @@ func NewPassFS(path string) (server fuse.Server, err error) {
 	}
 
 	inodes := make(map[fuseops.InodeID]inodeInfo)
-	fs := &passFS{inodes: inodes, user: user, group: group, allocatableInode: fuseops.RootInodeID + 1}
+	sizeMap := make(map[fuseops.InodeID]uint64)
+	fs := &passFS{inodes: inodes, user: user, group: group, allocatableInode: fuseops.RootInodeID + 1, sizeMap: sizeMap}
 	rootInfo := inodeInfo{
 		attributes: fuseops.InodeAttributes{
 			Nlink: 1,
-			Mode:  0755 | os.ModeDir,
+			Mode:  dirPermission | os.ModeDir,
 		},
 		dir: true,
 	}
@@ -117,6 +120,7 @@ type passFS struct {
 	node             pass.Node
 	mutex            sync.Mutex
 	allocatableInode fuseops.InodeID
+	sizeMap map[fuseops.InodeID]uint64
 }
 
 type inodeInfo struct {
@@ -142,6 +146,25 @@ func findChildInode(
 	}
 
 	err = fuse.ENOENT
+	return
+}
+
+func (fs *passFS) getSize(id fuseops.InodeID) (size uint64, err error) {
+	fs.mutex.Lock()
+	defer fs.mutex.Unlock()
+	size, exists := fs.sizeMap[id]
+	if exists {
+		return size, nil
+	}
+	inode, found := fs.inodes[id]
+	if !found {
+		return size, fmt.Errorf("cannot find inode for %d", id)
+	}
+	size, err = pass.GetSecretSize(inode.secret)
+	if err != nil {
+		return size, fmt.Errorf("error determining size for secret %s: %s", inode.secret, err)
+	}
+	fs.sizeMap[id] = size
 	return
 }
 
@@ -194,7 +217,7 @@ func (fs *passFS) LookUpInode(
 	// Copy over information.
 	op.Entry.Child = childInode
 	op.Entry.Attributes = fs.inodes[childInode].attributes
-	secretSize, err := pass.GetSecretSize(fs.inodes[childInode].secret)
+	secretSize, err := fs.getSize(childInode)
 	if err != nil {
 		return err
 	}

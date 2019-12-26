@@ -84,10 +84,10 @@ func GetSecret(secretName string) (string, error) {
 	return string(output), nil
 }
 
-func GetSecretSize(secretName string) (int, error) {
+func GetSecretSize(secretName string) (uint64, error) {
 	output, err := getSecretContent(secretName)
 	if err != nil {
 		return 0, fmt.Errorf("error reading secret %s: %s", secretName, err)
 	}
-	return len(output), nil
+	return uint64(len(output)), nil
 }
