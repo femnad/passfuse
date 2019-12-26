@@ -16,6 +16,8 @@ import (
 
 const (
 	maxSize = 1024
+	secretFileSuffix = ".gpg"
+	secretContentsSuffix = ".contents"
 )
 
 func (fs *passFS) allocateInode() fuseops.InodeID {
@@ -36,11 +38,13 @@ func getSecretBaseName(node pass.Node) string {
 
 func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) fuseutil.Dirent {
 	if node.IsLeaf {
+		baseName := getSecretBaseName(node)
+		displayedName := strings.Replace(baseName, secretFileSuffix, secretContentsSuffix, 1)
 		childInode := fs.allocateInode()
 		childEnt := fuseutil.Dirent{
 			Offset: offset,
 			Inode:  childInode,
-			Name:   getSecretBaseName(node),
+			Name:   displayedName,
 			Type:   fuseutil.DT_File,
 		}
 		fs.inodes[childInode] = inodeInfo{
