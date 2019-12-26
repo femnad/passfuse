@@ -19,14 +19,15 @@ const (
 var args struct {
 	CreateMountPath bool   `default:"true" arg:"-c"`
 	MountPath       string `default:"$HOME/.mnt/passfuse" arg:"-m"`
-	PasswordStorePath string `arg:"-p"`
+	PasswordStorePath string `arg:"-s"`
+	Prefix string `arg:"-p"`
 	UnmountAfter int `arg:"-u"`
 }
 
 func main() {
 	arg.MustParse(&args)
 
-	server, err := fs.NewPassFS(args.PasswordStorePath)
+	server, err := fs.NewPassFS(args.PasswordStorePath, args.Prefix)
 	if err != nil {
 		fmt.Printf("Error initializing filesystem %s\n", err)
 		os.Exit(1)

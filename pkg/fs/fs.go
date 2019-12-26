@@ -82,11 +82,11 @@ func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) fuseu
 	}
 }
 
-func NewPassFS(path string) (server fuse.Server, err error) {
+func NewPassFS(path, prefix string) (server fuse.Server, err error) {
 	user := uint32(os.Getuid())
 	group := uint32(os.Getgid())
 
-	rootNode, err := pass.GetPassTree(path)
+	rootNode, err := pass.GetPassTree(path, prefix)
 	if err != nil {
 		return nil, err
 	}

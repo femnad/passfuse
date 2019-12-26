@@ -51,13 +51,13 @@ func (p Parser) GetNodes(root *Node, prefix string) error {
 	return nil
 }
 
-func GetPassTree(basePath string) (Node, error) {
+func GetPassTree(basePath, prefix string) (Node, error) {
 	if basePath == "" {
 		basePath = os.ExpandEnv(defaultPath)
 	}
 	parser := Parser{basePath:basePath}
 	root := Node{IsLeaf: false}
-	err := parser.GetNodes(&root, "")
+	err := parser.GetNodes(&root, prefix)
 	if err != nil {
 		return Node{}, err
 	}
