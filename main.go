@@ -14,6 +14,7 @@ import (
 
 const (
 	mountPathPermission = 0700
+	unmountSleep = 5
 )
 
 var args struct {
@@ -22,6 +23,18 @@ var args struct {
 	PasswordStorePath string `arg:"-s"`
 	Prefix string `arg:"-p"`
 	UnmountAfter int `arg:"-u"`
+}
+
+func unmount(mountPath string) {
+	for {
+		err := fuse.Unmount(mountPath)
+		if err != nil {
+			fmt.Printf("Unmount error %v, sleeping for %d seconds\n", err, unmountSleep)
+			time.Sleep(time.Second * unmountSleep)
+		} else {
+			break
+		}
+	}
 }
 
 func main() {
@@ -71,10 +84,7 @@ func main() {
 	go func() {
 		if args.UnmountAfter > 0 {
 			time.Sleep(time.Second * time.Duration(args.UnmountAfter))
-			err := fuse.Unmount(mountPath)
-			if err != nil {
-				fmt.Printf("Unmount error %v\n", err)
-			}
+			unmount(mountPath)
 		}
 	}()
 
