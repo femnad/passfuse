@@ -72,12 +72,8 @@ func main() {
 	go func() {
 		for {
 			<-sigChan
-			err := fuse.Unmount(mountPath)
-			if err != nil {
-				fmt.Printf("Unmount error %v\n", err)
-			} else {
-				break
-			}
+			unmount(mountPath)
+			break
 		}
 	}()
 
