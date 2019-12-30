@@ -86,7 +86,7 @@ func main() {
 
 	err = mountedFS.Join(context.Background())
 	if err != nil {
-		fmt.Printf("Error unmounting filesystem %s\n", err)
+		fmt.Printf("Error serving filesystem %s\n", err)
 		os.Exit(1)
 	}
 }
