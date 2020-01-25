@@ -15,14 +15,19 @@ import (
 const (
 	mountPathPermission = 0700
 	unmountSleep = 5
+	version = "0.1.0"
 )
 
-var args struct {
+type args struct {
 	CreateMountPath bool   `default:"true" arg:"-c"`
 	MountPath       string `default:"$HOME/.mnt/passfuse" arg:"-m"`
 	PasswordStorePath string `arg:"-s"`
 	Prefix string `arg:"-p"`
 	UnmountAfter int `arg:"-u"`
+}
+
+func (args) Version() string {
+	return version
 }
 
 func unmount(mountPath string) {
@@ -38,6 +43,7 @@ func unmount(mountPath string) {
 }
 
 func main() {
+	args := args{}
 	arg.MustParse(&args)
 
 	server, err := fs.NewPassFS(args.PasswordStorePath, args.Prefix)

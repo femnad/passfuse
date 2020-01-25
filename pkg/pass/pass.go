@@ -15,6 +15,13 @@ const (
 	defaultPath = "$HOME/.password-store"
 )
 
+type NodeType int
+
+const (
+	Contents NodeType = iota
+	FirstLine = iota
+)
+
 type Node struct {
 	Children []Node
 	IsLeaf   bool
@@ -76,6 +83,7 @@ func getSecretContent(secretName string) ([]byte, error) {
 	output, err := ioutil.ReadAll(&stdout)
 	return output, err
 }
+
 func GetSecret(secretName string) (string, error) {
 	output, err := getSecretContent(secretName)
 	if err != nil {
@@ -84,10 +92,33 @@ func GetSecret(secretName string) (string, error) {
 	return string(output), nil
 }
 
-func GetSecretSize(secretName string) (uint64, error) {
-	output, err := getSecretContent(secretName)
+func GetSecretSize(secretName string, nodeType NodeType) (uint64, error) {
+	var output string
+	var err error
+
+	switch nodeType {
+	case Contents:
+		output, err = GetSecret(secretName)
+	case FirstLine:
+		output, err = GetSecretFirstLine(secretName)
+	default:
+		err = fmt.Errorf("cannot determine secret content type: %d", nodeType)
+	}
+
 	if err != nil {
 		return 0, fmt.Errorf("error reading secret %s: %s", secretName, err)
 	}
 	return uint64(len(output)), nil
+}
+
+func GetSecretFirstLine(secretName string) (string, error) {
+	output, err := getSecretContent(secretName)
+	if err != nil {
+		return "", fmt.Errorf("error reading secret %s: %s", secretName, err)
+	}
+	lines := strings.Split(string(output), "\n")
+	if len(lines) == 0 {
+		return "", fmt.Errorf("could not locate first line in secret %s: %s", secretName, err)
+	}
+	return fmt.Sprintf("%s\n", lines[0]), nil
 }

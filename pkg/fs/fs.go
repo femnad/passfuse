@@ -19,7 +19,13 @@ const (
 	filePermission       = 0400
 	secretFileSuffix     = ".gpg"
 	secretContentsSuffix = ".contents"
+	firstLineSuffix = ".first-line"
 )
+
+var suffixMap = map[pass.NodeType]string {
+	pass.Contents: secretContentsSuffix,
+	pass.FirstLine: firstLineSuffix,
+}
 
 func (fs *passFS) allocateInode() fuseops.InodeID {
 	fs.mutex.Lock()
@@ -37,30 +43,46 @@ func getSecretBaseName(node pass.Node) string {
 	return splitBySlash[len(splitBySlash)-1]
 }
 
-func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) fuseutil.Dirent {
+func (fs *passFS) getDirEnt(node pass.Node, offset fuseops.DirOffset, nodeType pass.NodeType) fuseutil.Dirent {
+	baseName := getSecretBaseName(node)
+	suffix := suffixMap[nodeType]
+	displayedName := strings.Replace(baseName, secretFileSuffix, suffix, 1)
+	childInode := fs.allocateInode()
+
+	childEnt := fuseutil.Dirent{
+		Offset: offset,
+		Inode:  childInode,
+		Name:   displayedName,
+		Type:   fuseutil.DT_File,
+	}
+	fs.inodes[childInode] = inodeInfo{
+		attributes: fuseops.InodeAttributes{
+			Nlink: 1,
+			Mode:  filePermission,
+		},
+		dir: false,
+		secret:node.Secret,
+		inodeType:nodeType,
+	}
+
+	return childEnt
+}
+
+func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) []fuseutil.Dirent {
 	if node.IsLeaf {
-		baseName := getSecretBaseName(node)
-		displayedName := strings.Replace(baseName, secretFileSuffix, secretContentsSuffix, 1)
-		childInode := fs.allocateInode()
-		childEnt := fuseutil.Dirent{
-			Offset: offset,
-			Inode:  childInode,
-			Name:   displayedName,
-			Type:   fuseutil.DT_File,
-		}
-		fs.inodes[childInode] = inodeInfo{
-			attributes: fuseops.InodeAttributes{
-				Nlink: 1,
-				Mode:  filePermission,
-			},
-			dir: false,
-			secret:node.Secret,
-		}
-		return childEnt
+		contentsDirEnt := fs.getDirEnt(node, offset, pass.Contents)
+		firstLineDirEnt := fs.getDirEnt(node, offset+1, pass.FirstLine)
+		return []fuseutil.Dirent{contentsDirEnt, firstLineDirEnt}
 	} else {
 		var nodesChildren []fuseutil.Dirent
-		for index, child := range node.Children {
-			nodesChildren = append(nodesChildren, fs.locateChildren(child, fuseops.DirOffset(index + 1)))
+		// index is 1-based
+		index := 1
+		for _, child := range node.Children {
+			// account for the fact we're creating `len(suffixMap)` times entries per actual entry
+			children := fs.locateChildren(child, fuseops.DirOffset(index))
+			offsetConsumed := len(children)
+			index += offsetConsumed
+			nodesChildren = append(nodesChildren, children...)
 		}
 		nodeInode := fs.allocateInode()
 		nodeEnt := fuseutil.Dirent{
@@ -78,7 +100,7 @@ func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) fuseu
 			secret:node.Secret,
 			children:nodesChildren,
 		}
-		return nodeEnt
+		return []fuseutil.Dirent{nodeEnt}
 	}
 }
 
@@ -103,8 +125,11 @@ func NewPassFS(path, prefix string) (server fuse.Server, err error) {
 	}
 
 	var children []fuseutil.Dirent
-	for index, child := range rootNode.Children {
-		children = append(children, fs.locateChildren(child, fuseops.DirOffset(index+1)))
+	index := 1
+	for _, child := range rootNode.Children {
+		locatedChildren := fs.locateChildren(child, fuseops.DirOffset(index))
+		children = append(children, locatedChildren...)
+		index += len(children)
 	}
 	rootInfo.children = children
 	fs.inodes[fuseops.RootInodeID] = rootInfo
@@ -133,6 +158,8 @@ type inodeInfo struct {
 	children []fuseutil.Dirent
 
 	secret string
+
+	inodeType pass.NodeType
 }
 
 func findChildInode(
@@ -160,7 +187,7 @@ func (fs *passFS) getSize(id fuseops.InodeID) (size uint64, err error) {
 	if !found {
 		return size, fmt.Errorf("cannot find inode for %d", id)
 	}
-	size, err = pass.GetSecretSize(inode.secret)
+	size, err = pass.GetSecretSize(inode.secret, inode.inodeType)
 	if err != nil {
 		return size, fmt.Errorf("error determining size for secret %s: %s", inode.secret, err)
 	}
@@ -312,7 +339,16 @@ func (fs *passFS) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) (err err
 		return err
 	}
 
-	secretContent, err := pass.GetSecret(inode.secret)
+	var secretContent string
+
+	switch inode.inodeType {
+	case pass.Contents:
+		secretContent, err = pass.GetSecret(inode.secret)
+	case pass.FirstLine:
+		secretContent, err = pass.GetSecretFirstLine(inode.secret)
+	default:
+		err = fmt.Errorf("cannot determine node type from given type: %d", inode.inodeType)
+	}
 	if err != nil {
 		return err
 	}
