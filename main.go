@@ -15,11 +15,13 @@ import (
 const (
 	mountPathPermission = 0700
 	unmountSleep = 5
-	version = "0.1.0"
+	version = "0.1.1"
 )
 
 type args struct {
+	ContentFiles bool `default:"true" arg:"-C"`
 	CreateMountPath bool   `default:"true" arg:"-c"`
+	FirstLineFiles bool `default:"false" arg:"-f"`
 	MountPath       string `default:"$HOME/.mnt/passfuse" arg:"-m"`
 	PasswordStorePath string `arg:"-s"`
 	Prefix string `arg:"-p"`
@@ -46,7 +48,8 @@ func main() {
 	args := args{}
 	arg.MustParse(&args)
 
-	server, err := fs.NewPassFS(args.PasswordStorePath, args.Prefix)
+	options := fs.PassFsOptions{ContentFiles:args.ContentFiles, FirstLineFiles:args.FirstLineFiles}
+	server, err := fs.NewPassFS(args.PasswordStorePath, args.Prefix, options)
 	if err != nil {
 		fmt.Printf("Error initializing filesystem %s\n", err)
 		os.Exit(1)

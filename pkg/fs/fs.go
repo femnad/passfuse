@@ -8,6 +8,7 @@ import (
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/jacobsa/fuse/fuseutil"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -25,6 +26,11 @@ const (
 var suffixMap = map[pass.NodeType]string {
 	pass.Contents: secretContentsSuffix,
 	pass.FirstLine: firstLineSuffix,
+}
+
+type PassFsOptions struct {
+	ContentFiles   bool
+	FirstLineFiles bool
 }
 
 func (fs *passFS) allocateInode() fuseops.InodeID {
@@ -70,9 +76,16 @@ func (fs *passFS) getDirEnt(node pass.Node, offset fuseops.DirOffset, nodeType p
 
 func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) []fuseutil.Dirent {
 	if node.IsLeaf {
-		contentsDirEnt := fs.getDirEnt(node, offset, pass.Contents)
-		firstLineDirEnt := fs.getDirEnt(node, offset+1, pass.FirstLine)
-		return []fuseutil.Dirent{contentsDirEnt, firstLineDirEnt}
+		var entries []fuseutil.Dirent
+		if fs.options.ContentFiles {
+			contentsDirEnt := fs.getDirEnt(node, offset, pass.Contents)
+			entries = append(entries, contentsDirEnt)
+		}
+		if fs.options.FirstLineFiles {
+			firstLineDirEnt := fs.getDirEnt(node, offset+1, pass.FirstLine)
+			entries = append(entries, firstLineDirEnt)
+		}
+		return entries
 	} else {
 		var nodesChildren []fuseutil.Dirent
 		// index is 1-based
@@ -104,7 +117,12 @@ func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) []fus
 	}
 }
 
-func NewPassFS(path, prefix string) (server fuse.Server, err error) {
+func NewPassFS(path, prefix string, options PassFsOptions) (server fuse.Server, err error) {
+
+	if !(options.ContentFiles || options.FirstLineFiles) {
+		log.Print("Neither content files nor first line files are enabled, mount point won't have any files")
+	}
+
 	user := uint32(os.Getuid())
 	group := uint32(os.Getgid())
 
@@ -115,7 +133,8 @@ func NewPassFS(path, prefix string) (server fuse.Server, err error) {
 
 	inodes := make(map[fuseops.InodeID]inodeInfo)
 	sizeMap := make(map[fuseops.InodeID]uint64)
-	fs := &passFS{inodes: inodes, user: user, group: group, allocatableInode: fuseops.RootInodeID + 1, sizeMap: sizeMap}
+	fs := &passFS{inodes: inodes, user: user, group: group, allocatableInode: fuseops.RootInodeID + 1, sizeMap: sizeMap,
+		options:options}
 	rootInfo := inodeInfo{
 		attributes: fuseops.InodeAttributes{
 			Nlink: 1,
@@ -146,6 +165,7 @@ type passFS struct {
 	mutex            sync.Mutex
 	allocatableInode fuseops.InodeID
 	sizeMap map[fuseops.InodeID]uint64
+	options PassFsOptions
 }
 
 type inodeInfo struct {
