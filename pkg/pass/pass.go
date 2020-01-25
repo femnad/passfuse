@@ -38,6 +38,22 @@ func (p Parser) GetNodes(root *Node, prefix string) error {
 		return nil
 	}
 	nodePath := path.Join(p.basePath, prefix)
+
+	singleSecretPrefix := fmt.Sprintf("%s%s", nodePath, secretSuffix)
+	_, err := os.Stat(singleSecretPrefix)
+	if !os.IsNotExist(err) {
+		rootPrefix, _ := path.Split(prefix)
+		root.Secret = strings.TrimRight(rootPrefix, "/")
+		nodeSecret := fmt.Sprintf("%s%s", prefix, secretSuffix)
+		root.Children = []Node{{
+			Children: nil,
+			IsLeaf:   true,
+			Secret:   nodeSecret,
+		}}
+		root.IsLeaf = false
+		return nil
+	}
+
 	info, err := ioutil.ReadDir(nodePath)
 	if err != nil {
 		return fmt.Errorf("error reading dir %s: %s", nodePath, err)
