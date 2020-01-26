@@ -15,7 +15,7 @@ import (
 const (
 	mountPathPermission = 0700
 	unmountSleep        = 5
-	version             = "0.1.3"
+	version             = "0.1.4"
 )
 
 type args struct {

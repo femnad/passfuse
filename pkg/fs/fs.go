@@ -135,7 +135,7 @@ func NewPassFS(path, prefix string, options PassFsOptions) (server fuse.Server, 
 	}
 
 	inodes := make(map[fuseops.InodeID]inodeInfo)
-	sizeMap := make(map[fuseops.InodeID]uint64)
+	sizeMap := make(map[fuseops.InodeID]pass.SecretSize)
 	fs := &passFS{inodes: inodes, user: user, group: group, allocatableInode: fuseops.RootInodeID + 1, sizeMap: sizeMap,
 		options:options}
 	rootInfo := inodeInfo{
@@ -167,7 +167,7 @@ type passFS struct {
 	node             pass.Node
 	mutex            sync.Mutex
 	allocatableInode fuseops.InodeID
-	sizeMap map[fuseops.InodeID]uint64
+	sizeMap map[fuseops.InodeID]pass.SecretSize
 	options PassFsOptions
 }
 
@@ -199,22 +199,34 @@ func findChildInode(
 	return
 }
 
-func (fs *passFS) getSize(id fuseops.InodeID) (size uint64, err error) {
+func getDesiredSize(nodeType pass.NodeType, size pass.SecretSize) (secretSize uint64) {
+	switch nodeType {
+	case pass.Contents:
+		secretSize = size.ContentsSize
+	case pass.FirstLine:
+		secretSize = size.FirstLineSize
+	}
+	return
+}
+
+func (fs *passFS) getSize(id fuseops.InodeID) (secretSize uint64, err error) {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
-	size, exists := fs.sizeMap[id]
-	if exists {
-		return size, nil
-	}
+
 	inode, found := fs.inodes[id]
 	if !found {
-		return size, fmt.Errorf("cannot find inode for %d", id)
+		return secretSize, fmt.Errorf("cannot find inode for %d", id)
 	}
-	size, err = pass.GetSecretSize(inode.secret, inode.inodeType)
-	if err != nil {
-		return size, fmt.Errorf("error determining size for secret %s: %s", inode.secret, err)
+	size, exists := fs.sizeMap[id]
+	if !exists {
+		size, err = pass.GetSecretSize(inode.secret)
+		if err != nil {
+			return secretSize, fmt.Errorf("error determining size for secret %s: %s", inode.secret, err)
+		}
+		fs.sizeMap[id] = size
 	}
-	fs.sizeMap[id] = size
+	secretSize = getDesiredSize(inode.inodeType, size)
+
 	return
 }
 
@@ -362,23 +374,18 @@ func (fs *passFS) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) (err err
 		return err
 	}
 
-	var secretContent string
-
-	switch inode.inodeType {
-	case pass.Contents:
-		secretContent, err = pass.GetSecret(inode.secret)
-	case pass.FirstLine:
-		secretContent, err = pass.GetSecretFirstLine(inode.secret)
-	default:
-		err = fmt.Errorf("cannot determine node type from given type: %d", inode.inodeType)
-	}
+	secretContent, err := pass.GetSecret(inode.secret)
 	if err != nil {
 		return err
 	}
 
+	if inode.inodeType == pass.FirstLine {
+		secretContent, err = pass.GetFirstLine(secretContent)
+		err = fmt.Errorf("cannot determine first line from secret: %s: %s", inode.secret, err)
+	}
+
 	// Let io.ReaderAt deal with the semantics.
 	reader := strings.NewReader(secretContent)
-
 	op.BytesRead, err = reader.ReadAt(op.Dst, op.Offset)
 
 	// Special case: FUSE doesn't expect us to return io.EOF.

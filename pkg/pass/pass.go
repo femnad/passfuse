@@ -22,6 +22,11 @@ const (
 	FirstLine = iota
 )
 
+type SecretSize struct {
+	ContentsSize uint64
+	FirstLineSize uint64
+}
+
 type Node struct {
 	Children []Node
 	IsLeaf   bool
@@ -108,33 +113,31 @@ func GetSecret(secretName string) (string, error) {
 	return string(output), nil
 }
 
-func GetSecretSize(secretName string, nodeType NodeType) (uint64, error) {
-	var output string
-	var err error
-
-	switch nodeType {
-	case Contents:
-		output, err = GetSecret(secretName)
-	case FirstLine:
-		output, err = GetSecretFirstLine(secretName)
-	default:
-		err = fmt.Errorf("cannot determine secret content type: %d", nodeType)
+func GetFirstLine(secretBody string) (string, error) {
+	lines := strings.Split(secretBody, "\n")
+	if len(lines) == 0 {
+		return "", fmt.Errorf("couldn't find any lines in secret body")
 	}
-
-	if err != nil {
-		return 0, fmt.Errorf("error reading secret %s: %s", secretName, err)
-	}
-	return uint64(len(output)), nil
+	return lines[0] + "\n", nil
 }
 
-func GetSecretFirstLine(secretName string) (string, error) {
-	output, err := getSecretContent(secretName)
+func GetSecretSize(secretName string) (secretSize SecretSize, err error) {
+	secretBody, err := GetSecret(secretName)
 	if err != nil {
-		return "", fmt.Errorf("error reading secret %s: %s", secretName, err)
+		return secretSize, fmt.Errorf("error getting secret body for %s: %s", secretName, err)
 	}
-	lines := strings.Split(string(output), "\n")
-	if len(lines) == 0 {
-		return "", fmt.Errorf("could not locate first line in secret %s: %s", secretName, err)
+	contentsSize := len(secretBody)
+
+	firstLine, err := GetFirstLine(secretBody)
+	if err != nil {
+		return secretSize, fmt.Errorf("error determining first line for secret %s: %s", secretName, err)
 	}
-	return fmt.Sprintf("%s\n", lines[0]), nil
+	firstLineSize := len(firstLine)
+
+	secretSize = SecretSize{
+		ContentsSize:  uint64(contentsSize),
+		FirstLineSize: uint64(firstLineSize),
+	}
+
+	return
 }
