@@ -77,13 +77,16 @@ func (fs *passFS) getDirEnt(node pass.Node, offset fuseops.DirOffset, nodeType p
 func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) []fuseutil.Dirent {
 	if node.IsLeaf {
 		var entries []fuseutil.Dirent
+		offsetStart := offset
 		if fs.options.ContentFiles {
-			contentsDirEnt := fs.getDirEnt(node, offset, pass.Contents)
+			contentsDirEnt := fs.getDirEnt(node, offsetStart, pass.Contents)
 			entries = append(entries, contentsDirEnt)
+			offsetStart++
 		}
 		if fs.options.FirstLineFiles {
-			firstLineDirEnt := fs.getDirEnt(node, offset+1, pass.FirstLine)
+			firstLineDirEnt := fs.getDirEnt(node, offsetStart, pass.FirstLine)
 			entries = append(entries, firstLineDirEnt)
+			offsetStart++
 		}
 		return entries
 	} else {
@@ -91,8 +94,8 @@ func (fs *passFS) locateChildren(node pass.Node, offset fuseops.DirOffset) []fus
 		// index is 1-based
 		index := 1
 		for _, child := range node.Children {
-			// account for the fact we're creating `len(suffixMap)` times entries per actual entry
 			children := fs.locateChildren(child, fuseops.DirOffset(index))
+			// account for the fact we might create more than one virtual entry per actual entry
 			offsetConsumed := len(children)
 			index += offsetConsumed
 			nodesChildren = append(nodesChildren, children...)
@@ -148,7 +151,7 @@ func NewPassFS(path, prefix string, options PassFsOptions) (server fuse.Server, 
 	for _, child := range rootNode.Children {
 		locatedChildren := fs.locateChildren(child, fuseops.DirOffset(index))
 		children = append(children, locatedChildren...)
-		index += len(children)
+		index += len(locatedChildren)
 	}
 	rootInfo.children = children
 	fs.inodes[fuseops.RootInodeID] = rootInfo
