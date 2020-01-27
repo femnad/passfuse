@@ -12,18 +12,18 @@ import (
 
 const (
 	secretSuffix = ".gpg"
-	defaultPath = "$HOME/.password-store"
+	defaultPath  = "$HOME/.password-store"
 )
 
 type NodeType int
 
 const (
-	Contents NodeType = iota
-	FirstLine = iota
+	Contents  NodeType = iota
+	FirstLine          = iota
 )
 
 type SecretSize struct {
-	ContentsSize uint64
+	ContentsSize  uint64
 	FirstLineSize uint64
 }
 
@@ -83,7 +83,7 @@ func GetPassTree(basePath, prefix string) (Node, error) {
 	if basePath == "" {
 		basePath = os.ExpandEnv(defaultPath)
 	}
-	parser := Parser{basePath:basePath}
+	parser := Parser{basePath: basePath}
 	root := Node{IsLeaf: false}
 	err := parser.GetNodes(&root, prefix)
 	if err != nil {
@@ -118,7 +118,7 @@ func GetFirstLine(secretBody string) (string, error) {
 	if len(lines) == 0 {
 		return "", fmt.Errorf("couldn't find any lines in secret body")
 	}
-	return lines[0] + "\n", nil
+	return lines[0], nil
 }
 
 func GetSecretSize(secretName string) (secretSize SecretSize, err error) {
